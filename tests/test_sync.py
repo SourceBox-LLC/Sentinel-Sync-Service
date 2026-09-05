@@ -222,3 +222,114 @@ def test_tenant_b_known_ids_cannot_tombstone_tenant_a_rows(monkeypatch, client, 
 
     a = db_session.query(SyncedRow).filter_by(tenant_key="tenant-a", table_name="cameras", row_id="cam-1").one()
     assert a.deleted is False
+
+
+# ── Read API: GET /tables and GET /rows ──────────────────────────────
+
+
+def _push(client, table, rows, known_ids=None):
+    body = {"table": table, "rows": rows}
+    if known_ids is not None:
+        body["known_ids"] = known_ids
+    return client.post("/v1/sync/push", json=body, headers=AUTH)
+
+
+def _row(i, **data):
+    return {"id": f"r{i:03d}", "updated_at": "2026-01-01T00:00:00Z", "data": data or {"n": i}}
+
+
+def test_read_requires_auth(client):
+    assert client.get("/v1/sync/tables").status_code == 401
+    assert client.get("/v1/sync/rows", params={"table": "cameras"}).status_code == 401
+
+
+def test_tables_summarises_what_is_mirrored(monkeypatch, client):
+    _mock_entitled(monkeypatch)
+    _push(client, "cameras", [_row(1), _row(2)], known_ids=["r001", "r002"])
+    _push(client, "motion_events", [_row(3)])
+    # Tombstone one camera so the deleted count is exercised.
+    _push(client, "cameras", [], known_ids=["r001"])
+
+    body = client.get("/v1/sync/tables", headers=AUTH).json()
+    by_table = {t["table"]: t for t in body["tables"]}
+
+    assert by_table["cameras"]["rows"] == 2
+    assert by_table["cameras"]["deleted"] == 1
+    assert by_table["motion_events"]["rows"] == 1
+    assert by_table["motion_events"]["deleted"] == 0
+
+
+def test_rows_returns_the_stored_payload(monkeypatch, client):
+    _mock_entitled(monkeypatch)
+    _push(client, "cameras", [_row(1, name="Front", continuous_24_7=True)])
+
+    body = client.get("/v1/sync/rows", params={"table": "cameras"}, headers=AUTH).json()
+
+    assert len(body["rows"]) == 1
+    assert body["rows"][0]["id"] == "r001"
+    # The raw-column payload comes back intact — this is the property a
+    # restore depends on.
+    assert body["rows"][0]["data"] == {"name": "Front", "continuous_24_7": True}
+    assert body["next_cursor"] is None
+
+
+def test_rows_paginates_with_a_stable_cursor(monkeypatch, client):
+    _mock_entitled(monkeypatch)
+    _push(client, "motion_events", [_row(i) for i in range(1, 8)])
+
+    seen, cursor, pages = [], None, 0
+    while True:
+        params = {"table": "motion_events", "limit": 3}
+        if cursor:
+            params["cursor"] = cursor
+        body = client.get("/v1/sync/rows", params=params, headers=AUTH).json()
+        seen.extend(r["id"] for r in body["rows"])
+        pages += 1
+        cursor = body["next_cursor"]
+        if not cursor:
+            break
+        assert pages < 10, "pagination failed to terminate"
+
+    # Every row exactly once, in order, with no duplicates across pages.
+    assert seen == [f"r{i:03d}" for i in range(1, 8)]
+    assert len(seen) == len(set(seen))
+
+
+def test_rows_excludes_tombstones_by_default_but_can_include_them(monkeypatch, client):
+    _mock_entitled(monkeypatch)
+    _push(client, "cameras", [_row(1), _row(2)], known_ids=["r001", "r002"])
+    _push(client, "cameras", [], known_ids=["r001"])  # tombstones r002
+
+    default = client.get("/v1/sync/rows", params={"table": "cameras"}, headers=AUTH).json()
+    assert [r["id"] for r in default["rows"]] == ["r001"], (
+        "a restore must not resurrect rows the operator deleted"
+    )
+
+    forensic = client.get(
+        "/v1/sync/rows",
+        params={"table": "cameras", "include_deleted": "true"},
+        headers=AUTH,
+    ).json()
+    assert [r["id"] for r in forensic["rows"]] == ["r001", "r002"]
+    assert [r["deleted"] for r in forensic["rows"]] == [False, True]
+
+
+def test_reads_are_scoped_to_the_calling_tenant(monkeypatch, client):
+    """The one that would be a data breach if it regressed: tenant B
+    must never see tenant A's rows, even asking for the same table."""
+    _mock_entitled(monkeypatch, tenant_key="tenant-a")
+    _push(client, "cameras", [_row(1, name="A-secret")])
+
+    _mock_entitled(monkeypatch, tenant_key="tenant-b")
+    body = client.get("/v1/sync/rows", params={"table": "cameras"}, headers=AUTH).json()
+    assert body["rows"] == []
+
+    tables = client.get("/v1/sync/tables", headers=AUTH).json()
+    assert tables["tables"] == []
+
+
+def test_unknown_table_returns_an_empty_page_not_an_error(monkeypatch, client):
+    _mock_entitled(monkeypatch)
+    body = client.get("/v1/sync/rows", params={"table": "nope"}, headers=AUTH).json()
+    assert body["rows"] == []
+    assert body["next_cursor"] is None
