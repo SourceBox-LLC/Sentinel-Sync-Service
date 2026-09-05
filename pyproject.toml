@@ -3,6 +3,7 @@ name = "sentinel-sync-service"
 version = "0.1.0"
 description = "Cloud data-sync mirror for self-hosted Sentinel Command Center installs — one-way, license-gated backup of a self-host's local database into a hosted Postgres."
 readme = "README.md"
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.141.1",
