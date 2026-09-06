@@ -35,7 +35,28 @@ uv run pytest
 
 `POST /v1/sync/push` — `Authorization: Bearer slk_<key>` (the same key Command Center already uses for Sentinel AI licensing — sync is a separate opt-in entitlement on that key, validated against License-Service's `GET /v1/licenses/entitlements` on each push, cached briefly). Body: `{table, rows: [{id, updated_at, data}], known_ids?: [...]}`. `known_ids`, when present, is the complete current set of local row ids for that table — anything previously synced under this tenant+table but missing from it gets tombstoned. Omitted entirely for high-volume log/event tables (motion events, etc.), whose local retention deletes must never propagate to the cloud copy. See `app/api/sync.py` and `app/core/entitlements.py` for the full contract, and Command Center's `backend/app/core/sync_client.py` for the client side.
 
+`GET /v1/sync/tables` — what this tenant has mirrored and how much of it. A restore plans against it, and it's the quickest way for an operator to confirm syncing is actually working *before* they need it.
+
+`GET /v1/sync/rows?table=…` — one page of mirrored rows. Keyset pagination on `row_id` (`cursor` / `next_cursor`, `limit` up to 1000), not OFFSET: a restore walks whole tables — `motion_events` runs to 100K+ rows on an active install — and OFFSET makes every successive page more expensive than the last. Ordering by `row_id` also keeps paging stable under concurrent pushes.
+
+Tombstoned rows are excluded by default, since a restore that resurrects cameras the operator deliberately deleted would be actively wrong. `include_deleted=true` is there for forensics, where "what was removed, and when" is the actual question.
+
+Every route derives its tenant from the validated licence key server-side — never from anything the caller sends — so read and write share one tenant boundary by construction.
+
 `GET /health` — pure liveness. `GET /health/ready` — 503 if the database is down.
+
+## Restoring
+
+This service only stores and serves the mirror; the restore itself runs on the Command Center being recovered:
+
+```bash
+cd backend
+uv run python scripts/restore_from_cloud.py --list      # what's up here
+uv run python scripts/restore_from_cloud.py --dry-run   # what would be written
+uv run python scripts/restore_from_cloud.py             # do it
+```
+
+Full procedure, including what deliberately isn't mirrored (node API keys, evidence blobs), is in Command Center's `docs/runbooks/DISASTER_RECOVERY.md` under "Self-hosted installs".
 
 ## Deploy
 
