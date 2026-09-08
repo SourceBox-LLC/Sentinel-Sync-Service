@@ -4,11 +4,11 @@ Cloud data-sync mirror for self-hosted Sentinel Command Center installs (`AUTH_P
 
 A genuinely separate service from both Command Center and License-Service — its own codebase, its own deploy target, its own Postgres database. Self-hosted operators' copy of Command Center never contains this service's code.
 
-Unlike its two SQLite-backed siblings, this service is **Postgres-native** and uses real Alembic migrations rather than boot-time `ALTER TABLE` — the generic `synced_rows` table (`tenant_key, table_name, row_id, payload jsonb, ...`) doesn't need per-model migrations kept in lockstep with Command Center's own schema; a push is always just an upsert.
+All three hosted services run Postgres (Command Center and License-Service migrated on 2026-09-07), so that is no longer what sets this one apart. What still does is **real Alembic migrations** rather than the boot-time `ALTER TABLE` sweep its siblings use: the generic `synced_rows` table (`tenant_key, table_name, row_id, payload jsonb, ...`) doesn't need per-model migrations kept in lockstep with Command Center's own schema, so a push is always just an upsert.
 
 ## Run locally
 
-Needs a real Postgres — JSONB isn't SQLite-portable, unlike the other two services in this family.
+Needs a real Postgres — there is no SQLite fallback here, because the `payload jsonb` column has no portable SQLite equivalent. (Command Center and License-Service do keep a SQLite path, for self-hosted installs.)
 
 ```bash
 docker run -d --name sentinel-sync-pg -e POSTGRES_USER=sync -e POSTGRES_PASSWORD=sync \
