@@ -23,13 +23,26 @@ primary_region = "sjc"
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = "off"
+  auto_stop_machines = "stop"
   auto_start_machines = true
-  # Always-warm: self-hosted installs' 30-minute sync ticks arrive on
-  # their own schedule, not in response to user traffic, so
-  # scale-to-zero would just turn a fraction of pushes into a cold
-  # start for no real cost benefit at this service's expected traffic.
-  min_machines_running = 1
+  # Scale to zero. Self-hosted installs push on a 30-minute background
+  # tick, so this service is idle by default — today, with no self-hosted
+  # installs, it serves nothing at all.
+  #
+  # The previous comment here reached the opposite conclusion from the
+  # same facts: that ticks "arrive on their own schedule, not in response
+  # to user traffic" was treated as an argument for staying warm, when it
+  # is precisely what makes the workload intermittent. It also asserted
+  # "no real cost benefit at this service's expected traffic" — at 48
+  # requests a day per install, the machine is idle ~95% of the time.
+  #
+  # Safe for the same three reasons as the License Service (see the
+  # longer note in its fly.toml): boot fits inside Fly's ~8s proxy
+  # window, the caller's timeout is longer than that window, and a failed
+  # push is fail-soft — sync_client.py just retries on the next tick,
+  # with the operator's local SQLite remaining the source of truth
+  # throughout. Nothing is lost by missing one push.
+  min_machines_running = 0
   processes = ["app"]
 
   [[http_service.checks]]
