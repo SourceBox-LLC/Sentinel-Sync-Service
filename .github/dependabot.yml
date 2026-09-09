@@ -1,0 +1,51 @@
+# Dependabot configuration.
+#
+# This repo had NO dependency watching until 2026-09-09, which is the
+# same gap that produced the Sentinel AI agent's three production
+# breakages in two days: mcp 2.x renaming a symbol, Starlette removing
+# on_startup, and a ceiling added to stop the second one silently
+# pinning the service to a Starlette line with 7 advisories. All three
+# surfaced on a rebuild of a repo nobody had rebuilt since June.
+#
+# `pip-audit --strict` in the Test workflow catches a *known advisory*
+# in what is already pinned. It does nothing about a lockfile quietly
+# ageing out of support. That is what this is for.
+#
+# NO AUTO-MERGE WORKFLOW HERE, DELIBERATELY.
+#
+# This repo now deploys to Fly on push to master. GitHub does not
+# trigger `on: push` workflows for commits pushed with GITHUB_TOKEN, so
+# an auto-merge action would land a bump on master WITHOUT deploying it
+# — master and production drift apart, and nothing reports an error.
+# That is a real, observed bug in Sentinel-Command (four frontend bumps
+# merged and never shipped on 2026-09-09). A human merge triggers the
+# deploy normally, so these PRs are reviewed and merged by hand until
+# that repo's PAT fix is proven.
+#
+# Extra reason to be careful here: this service is Postgres-native and
+# its tests need a real Postgres container, so a driver bump that only
+# misbehaves against the real engine will not show up anywhere else.
+version: 2
+updates:
+  # Python (uv) — pyproject.toml + uv.lock live at the repo root.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+    labels:
+      - "dependencies"
+
+  # GitHub Actions — pinned action versions age out the same way.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
