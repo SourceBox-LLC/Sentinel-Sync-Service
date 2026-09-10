@@ -60,8 +60,20 @@ Full procedure, including what deliberately isn't mirrored (node API keys, evide
 
 ## Deploy
 
-Single-stage `Dockerfile` (no frontend build — this service has no UI). `fly.toml`'s `release_command` runs `alembic upgrade head` before each deploy starts serving traffic. Needs a `DATABASE_URL` Fly secret pointing at a real Postgres instance (Fly Postgres, Neon, RDS, etc.) — provisioning that instance is a separate infra/cost decision, not something this repo does for you.
+Single-stage `Dockerfile` (no frontend build — this service has no UI). `fly.toml`'s `release_command` runs `alembic upgrade head` before each deploy starts serving traffic.
+
+**Deploys from CI.** Every push to `master` runs the tests against a real Postgres, then `flyctl deploy --ha=false`. (`--ha=false` because Fly provisions two machines by default; it did exactly that on the manual deploy and the extra had to be scaled away by hand. No `--strategy` override is needed here — unlike the sibling License service, this app has no volume.)
+
+Deploy automation was deferred while this was new infrastructure. That turned out worse than what it avoided: `fly.toml` became a file that did nothing, and a scale-to-zero change merged with CI fully green on 2026-09-09 without ever reaching Fly.
+
+**Scales to zero.** Self-hosted installs push on a 30-minute background tick, so this is idle ~95% of the time. Safe because boot is ~3s (inside the ~8s Fly's proxy waits for an auto-started machine to bind) and a failed push is fail-soft *and lossless*: `push_pending_changes` never raises, and cursors only advance on confirmed success, so a missed cycle's data simply waits for the next tick with the operator's local SQLite authoritative throughout.
 
 ## Status
 
-Built and verified locally: full test suite (unit tests against a real Postgres, including tenant-isolation and deletion-reconciliation regressions) plus a live cross-service integration check against a real running License-Service instance (valid+sync-enabled key → 200 and the row lands correctly scoped by tenant; unknown key → 403; License-Service unreachable → 502). Not yet deployed — no Postgres instance or Fly app provisioned yet.
+**Deployed and live** at `https://sentinel-sync.fly.dev`, on the shared `sentinel-postgres` cluster in its own `sentinel_sync` database, access-isolated by role from the other two.
+
+Verified by the full test suite (unit tests against a real Postgres, including tenant-isolation and deletion-reconciliation regressions) plus a live cross-service integration check against a running License-Service instance: valid + sync-enabled key → 200 with the row correctly scoped by tenant; unknown key → 403; License-Service unreachable → 502.
+
+This section previously read "Not yet deployed — no Postgres instance or Fly app provisioned yet", which stopped being true on 2026-09-07.
+
+**No backup dump job, deliberately.** This database holds a *mirror*; every row was pushed from an operator's local SQLite, which stays the source of truth. Losing it entirely costs one sync cycle. It is covered by the cluster-level snapshot — see `DISASTER_RECOVERY.md` in the Command Center repo.
