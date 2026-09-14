@@ -70,7 +70,15 @@ impl Entitlements {
     fn cache_index(raw_key: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(raw_key.as_bytes());
-        format!("{:x}", hasher.finalize())
+        // Explicit hex rather than `format!("{:x}", ..)`: sha2 0.11
+        // changed finalize() to return a type that no longer implements
+        // LowerHex, so the shorthand stopped compiling. Writing the
+        // encoding out keeps this independent of that detail.
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 
     fn cached(&self, index: &str) -> Option<Entitlement> {
