@@ -7,9 +7,9 @@
 # pinning the service to a Starlette line with 7 advisories. All three
 # surfaced on a rebuild of a repo nobody had rebuilt since June.
 #
-# `pip-audit --strict` in the Test workflow catches a *known advisory*
-# in what is already pinned. It does nothing about a lockfile quietly
-# ageing out of support. That is what this is for.
+# `cargo audit` in the Test workflow catches a *known advisory* in what
+# is already pinned. It does nothing about a lockfile quietly ageing
+# out of support. That is what this is for.
 #
 # NO AUTO-MERGE WORKFLOW HERE, DELIBERATELY.
 #
@@ -27,8 +27,13 @@
 # misbehaves against the real engine will not show up anywhere else.
 version: 2
 updates:
-  # Python (uv) — pyproject.toml + uv.lock live at the repo root.
-  - package-ecosystem: "uv"
+  # Rust — Cargo.toml + Cargo.lock at the repo root.
+  #
+  # Was `uv` until 2026-09-14, when this service was ported to Rust.
+  # The stale entry was not harmless: Dependabot kept opening PRs
+  # against a pyproject.toml that no longer exists, and the first one
+  # failed within minutes of the port landing.
+  - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
