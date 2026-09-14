@@ -13,7 +13,7 @@ repository = "https://github.com/SourceBox-LLC/Sentinel-Sync-Service"
 # request path stays readable.
 axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
-tower-http = { version = "0.6", features = ["limit"] }
+tower-http = { version = "0.7", features = ["limit"] }
 
 # Postgres. sqlx's runtime-checked query API (not the compile-time
 # macros) so a build needs no live database — CI builds this without a
