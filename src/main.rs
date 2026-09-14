@@ -36,10 +36,12 @@ async fn main() -> anyhow::Result<()> {
         .connect(&config.database_url)
         .await?;
 
-    // Schema bring-up replaces the Alembic `release_command`. sqlx takes a
-    // Postgres advisory lock for the duration, so two machines starting at
-    // once cannot race. The one migration is IF NOT EXISTS throughout, so
-    // this is a no-op against the existing production table.
+    // Schema bring-up, replacing Alembic's release_command. sqlx takes a
+    // Postgres advisory lock for the duration, so two machines starting
+    // at once cannot race, and it keeps a version table so the next
+    // schema change is a numbered migration rather than hand-edited DDL.
+    // The one migration is IF NOT EXISTS throughout, so this is a
+    // verified no-op against the table Alembic already created.
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     let state = AppState {
