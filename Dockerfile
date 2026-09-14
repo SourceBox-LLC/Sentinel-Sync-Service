@@ -1,21 +1,51 @@
-# Single-stage build — no frontend/UI to build first, same shape as
-# Sentinel-License-Service's Dockerfile.
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+# ---------------------------------------------------------------------
+# Build
+# ---------------------------------------------------------------------
+# Pinned to a specific Rust version rather than :latest so a toolchain
+# release can't change what ships without a commit saying so.
+FROM rust:1.98-slim-bookworm AS builder
 
-WORKDIR /app
+WORKDIR /build
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    libpq5 \
-    && rm -rf /var/lib/apt/lists/*
+# Dependency layer first: Cargo.toml/lock change far less often than
+# src/, so a source-only edit reuses the compiled dependency graph
+# instead of rebuilding ~200 crates.
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs \
+ && cargo build --release --locked \
+ && rm -rf src
 
-COPY pyproject.toml uv.lock* ./
-RUN uv sync --frozen --no-dev
+COPY src ./src
+COPY migrations ./migrations
+# Cargo caches on mtime; the stub main.rs above means the real one can
+# look "already built" without this.
+RUN touch src/main.rs && cargo build --release --locked
 
-COPY . .
+# ---------------------------------------------------------------------
+# Runtime
+# ---------------------------------------------------------------------
+# debian-slim, not scratch/distroless: the binary needs glibc, and the
+# few MB buys a shell for `fly ssh console`, which the backup and
+# debugging runbooks both assume.
+FROM debian:bookworm-slim
 
-ENV PYTHONUNBUFFERED=1
+# ca-certificates only — TLS is rustls, so there is no OpenSSL to
+# install, and Postgres is reached over sqlx's pure-Rust driver rather
+# than libpq. The Python image needed libpq5 and curl; this one needs
+# neither.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Unprivileged. The Python image ran as root; nothing here needs it.
+#
+# Named `syncsvc`, not `sync`: Debian already ships a system account
+# called `sync` (uid 4, shell /bin/sync), so `useradd sync` fails with
+# exit 9, "username already in use".
+RUN useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin syncsvc
+USER syncsvc
+
+COPY --from=builder /build/target/release/sentinel-sync-service /usr/local/bin/sentinel-sync-service
 
 EXPOSE 8000
-
-CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--forwarded-allow-ips=*", "--no-access-log"]
+CMD ["/usr/local/bin/sentinel-sync-service"]

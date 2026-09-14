@@ -1,6 +1,6 @@
-.venv/
+/target
 __pycache__/
 *.pyc
 .env
-.ruff_cache/
-.pytest_cache/
+.env.*
+!.env.example

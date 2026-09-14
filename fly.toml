@@ -14,11 +14,15 @@ primary_region = "sjc"
 [build]
 
 [deploy]
-  # Applies pending Alembic migrations before the new version starts
-  # serving traffic — this is the one service in the family using real
-  # migrations instead of boot-time ALTER TABLE, so this step is
-  # required (there's no ensure_schema() fallback here).
-  release_command = "/app/.venv/bin/alembic upgrade head"
+  # No release_command any more. Alembic used to apply migrations as a
+  # separate release step; the Rust service runs its sqlx migrations
+  # itself at startup, under a Postgres advisory lock so two machines
+  # starting at once cannot race. One fewer moving part, and the schema
+  # can never be a deploy behind the code that expects it.
+  #
+  # The single migration is CREATE TABLE / CREATE INDEX IF NOT EXISTS,
+  # matching the shape Alembic already created, so the first Rust deploy
+  # is a verified no-op against the live table rather than a rewrite.
 
 [http_service]
   internal_port = 8000
