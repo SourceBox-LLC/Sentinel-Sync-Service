@@ -43,7 +43,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 anyhow = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 
 [dev-dependencies]
 # tower::ServiceExt::oneshot drives the router without binding a port.
