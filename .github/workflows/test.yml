@@ -53,33 +53,64 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    env:
-      TEST_DATABASE_URL: postgresql+psycopg://sync:sync@localhost:5432/sentinel_sync_test
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
-      - name: Set up Python
-        run: uv python install 3.12
+      # Cuts a cold dependency build to seconds on repeat runs.
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
 
-      - name: Install dependencies
-        run: uv sync --extra dev
+      - name: Build
+        run: cargo build --locked
 
-      - name: Lint with ruff
-        run: uv run ruff check
+      # Not `-D warnings`, matching CameraNode: a style warning shouldn't
+      # go red on arrival and train everyone to ignore the column. This
+      # still fails on any clippy *error*.
+      - name: Clippy
+        run: cargo clippy --all-targets --locked
 
-      - name: Dependency scan (pip-audit)
-        run: uv run pip-audit --strict
+      - name: Formatting
+        run: cargo fmt --check
 
-      - name: Alembic migrations apply cleanly
-        run: uv run alembic upgrade head
+      # The wire-contract tests need a real Postgres — they exercise the
+      # tombstone/revive semantics and keyset pagination against actual
+      # SQL, which is where a port breaks. Without TEST_DATABASE_URL they
+      # skip themselves, so this variable is what makes them run.
+      - name: Tests
+        run: cargo test --locked
         env:
-          DATABASE_URL: postgresql+psycopg://sync:sync@localhost:5432/sentinel_sync_test
+          TEST_DATABASE_URL: postgresql://sync:sync@localhost:5432/sentinel_sync_test
 
-      - name: Run tests
-        run: uv run pytest -v
+      # Same gate the sibling repos run, one ecosystem over.
+      #
+      # RUSTSEC-2023-0071 is ignored, narrowly and deliberately. It is the
+      # Marvin timing attack in `rsa`, which has no fixed version — but
+      # `rsa` is not compiled into this binary. It reaches Cargo.lock
+      # through `sqlx-mysql`, an OPTIONAL dependency of the sqlx facade
+      # that this crate never enables (features here are postgres, chrono,
+      # json, macros, migrate). Cargo.lock records the union of optional
+      # dependencies regardless of features, and `cargo audit` reads the
+      # lockfile rather than the built graph, so it flags a crate that
+      # isn't there. Verified:
+      #
+      #   $ cargo tree -e normal | grep sqlx-
+      #     sqlx-core, sqlx-macros, sqlx-macros-core, sqlx-postgres
+      #     (no sqlx-mysql, no rsa)
+      #
+      # There is no feature combination that removes it while using sqlx,
+      # so the alternative was a permanently red gate — which is worse
+      # than a documented waiver, because it trains everyone to ignore the
+      # column. Re-check when sqlx restructures its optional backends or
+      # `rsa` ships a fix.
+      - name: Security advisories (cargo audit)
+        run: |
+          cargo install cargo-audit --locked || true
+          cargo audit --ignore RUSTSEC-2023-0071
 
   deploy:
     name: Deploy to Fly.io

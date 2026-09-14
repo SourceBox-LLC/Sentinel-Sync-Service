@@ -77,3 +77,23 @@ Verified by the full test suite (unit tests against a real Postgres, including t
 This section previously read "Not yet deployed — no Postgres instance or Fly app provisioned yet", which stopped being true on 2026-09-07.
 
 **No backup dump job, deliberately.** This database holds a *mirror*; every row was pushed from an operator's local SQLite, which stays the source of truth. Losing it entirely costs one sync cycle. It is covered by the cluster-level snapshot — see `DISASTER_RECOVERY.md` in the Command Center repo.
+
+
+## Implementation
+
+Rust (axum + sqlx), ported from the original Python/FastAPI service on
+2026-09-14. The wire contract did not change — Command Center's
+`sync_client.py` and `scripts/restore_from_cloud.py` talk to this exactly
+as before, and `tests/wire_contract.rs` pins the behaviours they depend
+on.
+
+Why the port: this service scales to zero, so startup time is a product
+property rather than a footnote. Fly's proxy allows an auto-started
+machine roughly 8s to bind its port, and the Python service was measured
+answering in ~6.2s of that budget — about 1.5s of headroom, with ~3.4s of
+it spent starting Python. The Rust binary starts in ~0.2s.
+
+```bash
+cargo run                   # needs DATABASE_URL
+cargo test                  # set TEST_DATABASE_URL for the wire-contract tests
+```

@@ -1,0 +1,56 @@
+[package]
+name = "sentinel-sync-service"
+version = "0.1.0"
+edition = "2021"
+authors = ["SourceBox LLC"]
+description = "Cloud data-sync mirror for self-hosted Sentinel Command Center installs."
+license = "AGPL-3.0"
+repository = "https://github.com/SourceBox-LLC/Sentinel-Sync-Service"
+
+[dependencies]
+# HTTP server. axum rather than a heavier framework: this service is 3
+# routes plus 3 health endpoints, and axum is thin enough that the whole
+# request path stays readable.
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tower-http = { version = "0.6", features = ["limit"] }
+
+# Postgres. sqlx's runtime-checked query API (not the compile-time
+# macros) so a build needs no live database — CI builds this without a
+# Postgres container, and `cargo build` works on a laptop offline.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "chrono",
+    "json",
+    "macros",
+    "migrate",
+] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# chrono, and specifically NaiveDateTime: the Python service stored and
+# served naive (tz-less) timestamps, and Command Center's restore script
+# parses them back with datetime.fromisoformat. Serialising an Offset
+# type here would append a "+00:00" the old service never sent.
+chrono = { version = "0.4", features = ["serde"] }
+
+# Outbound entitlement check to License-Service. rustls, not the system
+# OpenSSL, so the runtime image needs no TLS libraries installed.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+sha2 = "0.10"
+
+[dev-dependencies]
+# tower::ServiceExt::oneshot drives the router without binding a port.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = "debuginfo"
