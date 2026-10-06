@@ -44,6 +44,8 @@ Every route derives its tenant from the validated licence key server-side — ne
 
 `GET /health` — pure liveness. `GET /health/ready` — 503 if the database is down.
 
+**Rate limits**: 120/min per client address on each `/v1/sync/*` route (`Fly-Client-IP`, else the connection; `X-Forwarded-For` is ignored because a caller can forge it). Past the limit: 429 with `Retry-After: 60`. The limit runs before the licence check, so a refused request never reaches License-Service. Command Center's sync push and restore tool wait out a 429 instead of failing.
+
 ## Restoring
 
 This service only stores and serves the mirror; the restore itself runs on the Command Center being recovered:
@@ -76,7 +78,7 @@ Verified by the full test suite (unit tests against a real Postgres, including t
 
 This section previously read "Not yet deployed — no Postgres instance or Fly app provisioned yet", which stopped being true on 2026-09-07.
 
-**No backup dump job, deliberately.** This database holds a *mirror*; every row was pushed from an operator's local SQLite, which stays the source of truth. Losing it entirely costs one sync cycle. It is covered by the cluster-level snapshot — see `DISASTER_RECOVERY.md` in the Command Center repo.
+**No backup dump job, deliberately.** This database holds a *mirror*; every row was pushed from an operator's own database (SQLite or PostgreSQL), which stays the source of truth. Losing it entirely costs one sync cycle. It is covered by the cluster-level snapshot — see `DISASTER_RECOVERY.md` in the Command Center repo.
 
 
 ## Implementation
