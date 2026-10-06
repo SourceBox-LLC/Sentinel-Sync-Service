@@ -508,3 +508,31 @@ async fn bad_query_parameters_are_422_like_fastapi() {
         assert_eq!(status, 422, "{uri} should be 422");
     }
 }
+
+/// The Python limited every sync route to 120/min per client address;
+/// the port shipped without. The limit runs before the key check, so a
+/// refused request never reaches License-Service.
+#[tokio::test]
+async fn sync_routes_are_limited_per_client_address_before_the_key_check() {
+    let (state, _pool) = skip_without_db!("ratelimit");
+    let send = |ip: &'static str| {
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/v1/sync/tables")
+            .header("fly-client-ip", ip)
+            .header("x-forwarded-for", "10.0.0.1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        build_router(state.clone()).oneshot(req)
+    };
+    for _ in 0..120 {
+        assert_eq!(send("198.51.100.7").await.unwrap().status(), 401);
+    }
+    let refused = send("198.51.100.7").await.unwrap();
+    assert_eq!(refused.status(), 429);
+    assert_eq!(refused.headers()["retry-after"], "60");
+    let body: Value =
+        serde_json::from_slice(&refused.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body["error"], "rate_limit_exceeded");
+    assert_eq!(send("198.51.100.8").await.unwrap().status(), 401);
+}
