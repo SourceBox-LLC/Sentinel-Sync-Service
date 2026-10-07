@@ -124,19 +124,29 @@ jobs:
     # this job last won, even an older commit (Command Center shipped its
     # parent commit that way on 2026-10-07). An older run that comes up
     # late now steps aside for the newer one.
+    permissions:
+      contents: read
+      actions: read   # the first step lists this workflow's runs
     concurrency:
       group: deploy-sentinel-sync
       cancel-in-progress: false
     steps:
-      - name: Deploy only the newest commit on master
+      # Step aside only when a NEWER push run of this workflow exists:
+      # that run deploys a commit containing this one. Not "a newer
+      # commit": a Dependabot merge starts no run, and stepping aside for
+      # it would deploy nothing.
+      - name: Deploy unless a newer run will
         id: newest
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          head=$(git ls-remote "https://github.com/${{ github.repository }}" refs/heads/master | cut -f1)
-          if [ "$head" = "${{ github.sha }}" ]; then
-            echo "deploy=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "master is at $head now; its own run deploys it. Skipping ${{ github.sha }}."
+          newer=$(gh api "repos/${{ github.repository }}/actions/workflows/test.yml/runs?branch=master&event=push&per_page=30" \
+            -q '[.workflow_runs[] | select(.id > ${{ github.run_id }}) | select(.head_sha != "${{ github.sha }}")] | length')
+          if [ "${newer:-0}" -gt 0 ]; then
+            echo "$newer newer push run(s) will deploy a later commit. Skipping ${{ github.sha }}."
             echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/checkout@v7
