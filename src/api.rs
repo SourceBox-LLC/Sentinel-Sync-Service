@@ -129,6 +129,7 @@ pub async fn push(
     Json(payload): Json<PushRequest>,
 ) -> Result<Json<PushResponse>, ApiError> {
     let tenant_key = tenant_from_auth(&state, &headers).await?;
+    validate_push(&payload)?;
 
     if payload.rows.len() > state.config.max_rows_per_push {
         return Err(ApiError::payload_too_large(format!(
@@ -210,6 +211,32 @@ pub async fn push(
         accepted,
         tombstoned,
     }))
+}
+
+/// Refuse what the columns can't hold, before the transaction starts.
+///
+/// `table_name` is VARCHAR(100) and `row_id` VARCHAR(64): an oversized
+/// value used to reach Postgres, fail the whole batch's transaction and
+/// come back as a 500. Table names are also held to the shape Command
+/// Center's are (lowercase and underscores), without a fixed list, so a
+/// new mirrored table needs no change here.
+fn validate_push(payload: &PushRequest) -> Result<(), ApiError> {
+    let table = payload.table.as_str();
+    if table.is_empty()
+        || table.len() > 100
+        || !table.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+    {
+        return Err(ApiError::unprocessable(
+            "'table' must be 1-100 lowercase letters or underscores",
+        ));
+    }
+    let bad_id = |id: &str| id.is_empty() || id.len() > 64;
+    if payload.rows.iter().any(|r| bad_id(&r.id))
+        || payload.known_ids.iter().flatten().any(|id| bad_id(id))
+    {
+        return Err(ApiError::unprocessable("row ids must be 1-64 characters"));
+    }
+    Ok(())
 }
 
 pub async fn list_tables(
@@ -333,4 +360,41 @@ pub async fn list_rows(
         rows: page,
         next_cursor,
     }))
+}
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+
+    fn push(table: &str, ids: &[&str]) -> PushRequest {
+        PushRequest {
+            table: table.to_string(),
+            rows: ids
+                .iter()
+                .map(|id| PushRow {
+                    id: id.to_string(),
+                    updated_at: chrono::NaiveDateTime::default(),
+                    data: serde_json::json!({}),
+                })
+                .collect(),
+            known_ids: None,
+        }
+    }
+
+    #[test]
+    fn a_normal_push_passes() {
+        assert!(validate_push(&push("incident_evidence", &["1", "abc-123"])).is_ok());
+    }
+
+    #[test]
+    fn a_bad_table_name_or_row_id_is_refused() {
+        for table in ["", "Cameras", "cameras;drop", &"a".repeat(101)] {
+            assert!(validate_push(&push(table, &["1"])).is_err(), "{table:?}");
+        }
+        assert!(validate_push(&push("cameras", &[""])).is_err());
+        assert!(validate_push(&push("cameras", &[&"x".repeat(65)])).is_err());
+        let mut p = push("cameras", &[]);
+        p.known_ids = Some(vec!["y".repeat(65)]);
+        assert!(validate_push(&p).is_err());
+    }
 }
