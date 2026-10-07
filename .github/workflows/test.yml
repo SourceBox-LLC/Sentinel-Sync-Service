@@ -119,13 +119,31 @@ jobs:
     # Push-only: a PR runs the tests above but never ships.
     if: github.event_name == 'push'
     # Serialize so two quick pushes don't race on the machine update.
+    # Queue rather than cancel, and deploy only if this commit is still
+    # master's head: with cancel-in-progress, whichever run *reached*
+    # this job last won, even an older commit (Command Center shipped its
+    # parent commit that way on 2026-10-07). An older run that comes up
+    # late now steps aside for the newer one.
     concurrency:
       group: deploy-sentinel-sync
-      cancel-in-progress: true
+      cancel-in-progress: false
     steps:
+      - name: Deploy only the newest commit on master
+        id: newest
+        run: |
+          head=$(git ls-remote "https://github.com/${{ github.repository }}" refs/heads/master | cut -f1)
+          if [ "$head" = "${{ github.sha }}" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "master is at $head now; its own run deploys it. Skipping ${{ github.sha }}."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.newest.outputs.deploy == 'true'
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: steps.newest.outputs.deploy == 'true'
 
       # --ha=false: Fly provisions TWO machines by default and this
       # service needs one. It did exactly that on the 2026-09-09 manual
@@ -135,6 +153,7 @@ jobs:
       # rolling strategy works. (Command Center needs `immediate`
       # because its web machine mounts a single-attachment volume.)
       - name: flyctl deploy
+        if: steps.newest.outputs.deploy == 'true'
         run: flyctl deploy --remote-only --ha=false --yes
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
