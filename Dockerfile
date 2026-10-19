@@ -47,5 +47,12 @@ USER syncsvc
 
 COPY --from=builder /build/target/release/sentinel-sync-service /usr/local/bin/sentinel-sync-service
 
+# The private CA that signed the production Postgres server certificate.
+# DATABASE_URL names it (`sslmode=verify-full&sslrootcert=…`), so the
+# connection is encrypted and refuses a server that is not
+# `sentinel-postgres`. Public by nature. Setup, checks and rotation:
+# "Connections use TLS" in Sentinel-Command's docs/runbooks/DISASTER_RECOVERY.md.
+COPY deploy/sentinel-postgres-ca.pem /etc/sentinel/sentinel-postgres-ca.pem
+
 EXPOSE 8000
 CMD ["/usr/local/bin/sentinel-sync-service"]
